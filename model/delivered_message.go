@@ -15,11 +15,19 @@ type UserDeliveredMessage struct {
 	isSelf   bool
 }
 
+// NewUserDeliveredMessage builds a DM delivered receipt. The thread is the
+// first delivered recipient; a receipt whose deliveredUids is empty has no
+// thread to attribute it to and reports ThreadID() == "".
 func NewUserDeliveredMessage(data TDeliveredMessage) UserDeliveredMessage {
+	threadID := ""
+	if len(data.DeliveredUIDs) > 0 {
+		threadID = data.DeliveredUIDs[0]
+	}
+
 	return UserDeliveredMessage{
 		typ:      ThreadTypeUser,
 		Data:     data,
-		threadID: data.DeliveredUIDs[0],
+		threadID: threadID,
 		isSelf:   false,
 	}
 }

@@ -156,9 +156,16 @@ func (ln *listener) handleMessagesStatus(ctx context.Context, body BaseWSMessage
 	if len(eventData.Data.DeliveredMessages) > 0 {
 		deliveredMsgs := make([]model.DeliveredMessage, 0, len(eventData.Data.DeliveredMessages))
 		for _, dm := range eventData.Data.DeliveredMessages {
-			deliveredMsgs = append(deliveredMsgs, model.NewUserDeliveredMessage(dm))
+			delivered := model.NewUserDeliveredMessage(dm)
+			if delivered.ThreadID() == "" {
+				// No deliveredUids: there is no thread to attribute the receipt to.
+				continue
+			}
+			deliveredMsgs = append(deliveredMsgs, delivered)
 		}
-		emit(ctx, ln.ch.DeliveredMessages, deliveredMsgs)
+		if len(deliveredMsgs) > 0 {
+			emit(ctx, ln.ch.DeliveredMessages, deliveredMsgs)
+		}
 	}
 	if len(eventData.Data.SeenMessages) > 0 {
 		seenMsgs := make([]model.SeenMessage, 0, len(eventData.Data.SeenMessages))
