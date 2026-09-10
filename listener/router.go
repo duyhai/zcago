@@ -3,6 +3,7 @@ package listener
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"strconv"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 
 func (ln *listener) router(ctx context.Context, version, cmd, sub uint, body BaseWSMessage) {
 	key := fmt.Sprintf("%d_%d_%d", version, cmd, sub)
+	defer ln.recoverHandlerPanic(ctx, key)
 
 	switch key {
 	case "1_1_1":
@@ -401,6 +403,36 @@ func (ln *listener) handleDuplicateConnection() {
 //
 // Helpers
 //
+
+// HandlerPanicError is the cause of the error emitted on Error() when a
+// message handler panics. Key is the router key ("<version>_<cmd>_<sub>") of
+// the frame being handled and Stack the goroutine stack at the panic. The
+// frame payload is deliberately not retained: it may carry private message
+// content.
+type HandlerPanicError struct {
+	Key   string
+	Value any
+	Stack []byte
+}
+
+func (e *HandlerPanicError) Error() string {
+	return fmt.Sprintf("panic in websocket message handler %s: %v", e.Key, e.Value)
+}
+
+// recoverHandlerPanic converts a panic raised while handling one frame into
+// an error on Error(), so a single malformed frame cannot take down the read
+// loop (and with it the connection). It is deferred by router only, so the
+// run loop's ctx-cancel and close paths, and the Closed emit, stay outside
+// its scope.
+func (ln *listener) recoverHandlerPanic(ctx context.Context, key string) {
+	r := recover()
+	if r == nil {
+		return
+	}
+
+	cause := &HandlerPanicError{Key: key, Value: r, Stack: debug.Stack()}
+	ln.emitError(ctx, errs.WrapZCA(cause.Error(), "listener.router", cause))
+}
 
 func startPingLoop(ctx context.Context, interval time.Duration, f func()) func() {
 	ticker := time.NewTicker(interval)
