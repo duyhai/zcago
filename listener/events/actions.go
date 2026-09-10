@@ -23,7 +23,7 @@ type actionData struct {
 }
 
 func (m *actionData) UnmarshalJSON(data []byte) error {
-	if data[0] == '"' {
+	if len(data) > 0 && data[0] == '"' {
 		var s string
 		if err := json.Unmarshal(data, &s); err != nil || s == "" {
 			return err

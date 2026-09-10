@@ -198,7 +198,7 @@ type TFriendEventPinCreateTopicParams struct {
 }
 
 func (p *TFriendEventPinCreateTopicParams) UnmarshalJSON(data []byte) error {
-	if data[0] == '"' {
+	if len(data) > 0 && data[0] == '"' {
 		var s string
 		if err := json.Unmarshal(data, &s); err != nil {
 			return err
