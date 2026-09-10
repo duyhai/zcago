@@ -92,6 +92,8 @@ func NewGroupEvent(uid, action string, data TGroupEvent) GroupEvent {
 	switch grEvent {
 	case GroupEventTypeJoin:
 		isSelf = false
+	case GroupEventTypeJoinRequest:
+		isSelf = slices.Contains(data.(TGroupEventJoinRequest).UIDs, uid)
 	case GroupEventTypeNewPinTopic, GroupEventTypeUnpinTopic, GroupEventTypeUpdatePinTopic:
 		isSelf = data.(TGroupEventPinTopic).ActorID == uid
 	case GroupEventTypeReorderPinTopic:
@@ -103,15 +105,19 @@ func NewGroupEvent(uid, action string, data TGroupEvent) GroupEvent {
 	case GroupEventTypeRemindTopic:
 		isSelf = data.(TGroupEventRemindTopic).CreatorID == uid
 	default:
-		baseData := data.(TGroupEventBase)
-		if len(baseData.UpdateMembers) == 0 {
-			isSelf = baseData.SourceID == uid
-		} else {
-			isSelf = slices.ContainsFunc(baseData.UpdateMembers,
-				func(m GroupEventUpdateMember) bool {
-					return m.ID == uid
-				},
-			)
+		// Every other action decodes as TGroupEventBase. A payload of another
+		// type (an action decoded in events but not listed above) must not
+		// panic here; it simply is not attributed to the account.
+		if baseData, ok := data.(TGroupEventBase); ok {
+			if len(baseData.UpdateMembers) == 0 {
+				isSelf = baseData.SourceID == uid
+			} else {
+				isSelf = slices.ContainsFunc(baseData.UpdateMembers,
+					func(m GroupEventUpdateMember) bool {
+						return m.ID == uid
+					},
+				)
+			}
 		}
 	}
 
