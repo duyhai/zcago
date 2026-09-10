@@ -1,6 +1,7 @@
 package listener
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/amrakk/zcago/model"
@@ -87,5 +88,43 @@ func TestRun_JoinRequestGroupEventIsEmitted(t *testing.T) {
 	case err := <-ln.Error():
 		t.Fatalf("unexpected error: %v", err)
 	default:
+	}
+}
+
+func TestRun_UndrainedCipherKeyDoesNotBlockLoop(t *testing.T) {
+	cl := newFakeClient()
+	ln, _, _ := startTestListener(t, cl, newTestSession("me"))
+
+	// Every (re)connect delivers a 1_1_1 frame. A consumer that never reads
+	// CipherKey() must not be able to wedge the read loop once the buffer
+	// (defaultBuffers().CipherKey) fills up.
+	n := defaultBuffers().CipherKey + 2
+	for i := 1; i <= n; i++ {
+		cl.msgs <- cipherKeyFrame(t, fmt.Sprintf("key-%d", i))
+	}
+	cl.msgs <- eventFrame(t, 1, 502, 0, deliveredEvent(
+		map[string]any{"msgId": "m1", "deliveredUids": []string{"u1"}},
+	))
+
+	batch := recv(t, ln.DeliveredMessages(), "delivered batch behind undrained cipher keys")
+	if len(batch) != 1 {
+		t.Fatalf("got %d delivered messages, want 1", len(batch))
+	}
+
+	// The newest key is what matters and it must be the last one buffered.
+	var last string
+	for {
+		select {
+		case last = <-ln.CipherKey():
+			continue
+		default:
+		}
+		break
+	}
+	if want := fmt.Sprintf("key-%d", n); last != want {
+		t.Fatalf("last buffered cipher key = %q, want %q", last, want)
+	}
+	if ln.cipherKey != fmt.Sprintf("key-%d", n) {
+		t.Fatalf("listener cipherKey = %q, want the newest key", ln.cipherKey)
 	}
 }

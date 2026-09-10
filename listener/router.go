@@ -65,7 +65,11 @@ func (ln *listener) handleCipherKey(ctx context.Context, body BaseWSMessage) {
 	}
 
 	ln.cipherKey = key
-	ln.ch.CipherKey <- key
+	// Non-blocking like every other channel: a consumer that never reads
+	// CipherKey() must not wedge the read loop once the buffer fills (each
+	// reconnect delivers a new key). Only the newest key is meaningful, so
+	// emit's drop-oldest policy is the right one here.
+	emit(ctx, ln.ch.CipherKey, key)
 
 	if ln.pingStopper != nil {
 		(*ln.pingStopper)()
