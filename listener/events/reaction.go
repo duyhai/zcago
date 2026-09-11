@@ -64,6 +64,14 @@ func unmarshalReactions(b json.RawMessage) ([]model.TReaction, error) {
 			return nil, err
 		}
 
+		// Retain the wire shape of `content` BEFORE decoding it, so a
+		// caller can see what Zalo actually sent when the decoded
+		// Content turns out to be unusable (e.g. no rMsg entry, or a
+		// zero target id -- indistinguishable after decoding). Reaction
+		// content carries only ids, the icon code, rType and source; it
+		// never contains message text.
+		r.ContentRaw = aux.Content
+
 		if aux.Content == "" {
 			r.Content = model.ReactionContent{}
 		} else {
