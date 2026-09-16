@@ -1,9 +1,7 @@
 package model
 
 import (
-	"bytes"
 	"encoding/json"
-	"math/big"
 
 	"github.com/amrakk/zcago/config"
 	"github.com/amrakk/zcago/errs"
@@ -151,32 +149,35 @@ type TQuote struct {
 	TTL         uint   `json:"ttl"`
 }
 
+// UnmarshalJSON accepts the quote's id-like and timestamp-like fields --
+// ownerId, cliMsgId, globalMsgId and ts -- as EITHER a JSON number or a
+// quoted numeric string. zca-js types the numeric ones as numbers, but live
+// group catch-up pages carry quotes whose cliMsgId is a string; decoding that
+// into int64 failed the ENTIRE old-messages page (every message in it lost)
+// and, on the live path, silently dropped the quoting message.
+//
+// An absent, null, empty or unparseable value leaves the field at its zero
+// value and is NOT an error. cliMsgType and ttl stay strict: they are not
+// ids, and there is no evidence of them arriving as strings. A quote that is
+// not a JSON object at all still errors.
 func (tq *TQuote) UnmarshalJSON(data []byte) error {
 	type alias TQuote
-	aux := &struct {
-		OwnerID json.RawMessage `json:"ownerId"`
+	type quoteWire struct {
+		OwnerID     json.RawMessage `json:"ownerId"`
+		CliMsgID    json.RawMessage `json:"cliMsgId"`
+		GlobalMsgID json.RawMessage `json:"globalMsgId"`
+		Timestamp   json.RawMessage `json:"ts"`
 		*alias
-	}{
-		alias: (*alias)(tq),
 	}
-
+	aux := quoteWire{alias: (*alias)(tq)}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
 
-	rawOwnerID := bytes.TrimSpace(aux.OwnerID)
-	if len(rawOwnerID) > 0 && rawOwnerID[0] == '"' {
-		if err := json.Unmarshal(rawOwnerID, &tq.OwnerID); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	ownerID, ok := new(big.Int).SetString(string(rawOwnerID), 10)
-	if !ok {
-		return errs.NewZCA("quote ownerId must be a string or integer", "model.TQuote.UnmarshalJSON")
-	}
-	tq.OwnerID = ownerID.String()
+	tq.OwnerID = flexIDString(aux.OwnerID)
+	tq.CliMsgID = flexInt64(aux.CliMsgID)
+	tq.GlobalMsgID = flexInt64(aux.GlobalMsgID)
+	tq.Timestamp = flexInt64(aux.Timestamp)
 	return nil
 }
 
@@ -199,6 +200,37 @@ type TDeletedContent struct {
 	ClientDelMsgId int `json:"clientDelMsgId"`
 	GlobalDelMsgId int `json:"globalDelMsgId"`
 	DestId         int `json:"destId"`
+}
+
+// UnmarshalJSON accepts the user/message id fields (uidFrom, uidTo,
+// clientDelMsgId, globalDelMsgId, destId) as either a JSON number or a quoted
+// numeric string; unusable values become 0 (see flexInt64). Before this a
+// string id here failed DeletedContent, then TOtherContent (an array is not a
+// map), so Content -- and with it the whole message page -- failed. type and
+// actionType are enums and stay strict.
+func (d *TDeletedContent) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Type           int             `json:"type"`
+		ActionType     int             `json:"actionType"`
+		UIDFrom        json.RawMessage `json:"uidFrom"`
+		UIDTo          json.RawMessage `json:"uidTo"`
+		ClientDelMsgId json.RawMessage `json:"clientDelMsgId"`
+		GlobalDelMsgId json.RawMessage `json:"globalDelMsgId"`
+		DestId         json.RawMessage `json:"destId"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*d = TDeletedContent{
+		Type:           raw.Type,
+		ActionType:     raw.ActionType,
+		UIDFrom:        flexInt(raw.UIDFrom),
+		UIDTo:          flexInt(raw.UIDTo),
+		ClientDelMsgId: flexInt(raw.ClientDelMsgId),
+		GlobalDelMsgId: flexInt(raw.GlobalDelMsgId),
+		DestId:         flexInt(raw.DestId),
+	}
+	return nil
 }
 
 type TOtherContent map[string]any

@@ -1,10 +1,7 @@
 package model
 
 import (
-	"bytes"
 	"encoding/json"
-	"strconv"
-	"strings"
 
 	"github.com/amrakk/zcago/config"
 )
@@ -262,30 +259,4 @@ func (r *ReactionMessageRef) UnmarshalJSON(data []byte) error {
 	r.CMsgID = flexInt(raw.CMsgID)
 	r.MsgType = flexInt(raw.MsgType)
 	return nil
-}
-
-// flexInt reads a JSON number or a quoted decimal string as an int,
-// returning 0 for anything else (absent, null, empty, non-numeric, or out of
-// range). It never reports an error -- see ReactionMessageRef.UnmarshalJSON.
-func flexInt(b json.RawMessage) int {
-	b = bytes.TrimSpace(b)
-	if len(b) == 0 || string(b) == "null" {
-		return 0
-	}
-	if b[0] == '"' {
-		var s string
-		if err := json.Unmarshal(b, &s); err != nil {
-			return 0
-		}
-		n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
-		if err != nil {
-			return 0
-		}
-		return int(n)
-	}
-	n, err := strconv.ParseInt(string(b), 10, 64)
-	if err != nil {
-		return 0
-	}
-	return int(n)
 }
