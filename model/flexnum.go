@@ -62,3 +62,11 @@ func flexIDString(b json.RawMessage) string {
 	}
 	return n.String()
 }
+
+// FlexIDString is flexIDString for other packages of this module (the api
+// package's response types): a JSON string as-is, a JSON integer of any size
+// as its decimal string, "" for anything else. It never reports an error.
+func FlexIDString(b json.RawMessage) string { return flexIDString(b) }
+
+// FlexInt is flexInt for other packages of this module (see FlexIDString).
+func FlexInt(b json.RawMessage) int { return flexInt(b) }

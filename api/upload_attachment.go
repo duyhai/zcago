@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"sync"
 	"time"
 
@@ -427,13 +426,21 @@ var uploadAttachmentFactory = apiFactory[UploadAttachmentResponse, UploadAttachm
 	},
 )
 
+// UnmarshalJSON decodes an upload response. The ids are read leniently
+// (model.FlexIDString / model.FlexInt): photoId is a number for groups and
+// a string for users, and it is read from the raw token so a 64-bit id is
+// never rounded through float64 on its way into photo_original/send;
+// clientFileId and chunkId are bookkeeping this library only echoes, so a
+// quoted number must not fail the whole upload.
 func (r *rawResponse) UnmarshalJSON(data []byte) error {
 	type alias rawResponse
 	aux := &struct {
 		*alias
 
-		Finished any `json:"finished"`
-		PhotoID  any `json:"photoId"`
+		Finished     any             `json:"finished"`
+		PhotoID      json.RawMessage `json:"photoId"`
+		ClientFileID json.RawMessage `json:"clientFileId"`
+		ChunkID      json.RawMessage `json:"chunkId"`
 	}{
 		alias: (*alias)(r),
 	}
@@ -442,20 +449,12 @@ func (r *rawResponse) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	switch v := aux.PhotoID.(type) {
-	case float64:
-		s := strconv.FormatInt(int64(v), 10)
-		r.PhotoID = &s
-	case string:
-		r.PhotoID = &v
-	case json.Number:
-		s := v.String()
-		r.PhotoID = &s
-	case nil:
-	default:
-		s := fmt.Sprintf("%v", v)
+	r.PhotoID = nil
+	if s := model.FlexIDString(aux.PhotoID); s != "" {
 		r.PhotoID = &s
 	}
+	r.ClientFileID = model.FlexInt(aux.ClientFileID)
+	r.ChunkID = model.FlexInt(aux.ChunkID)
 
 	switch v := aux.Finished.(type) {
 	case bool:

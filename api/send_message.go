@@ -88,14 +88,37 @@ type (
 		URL     string
 		Body    io.Reader
 		Headers http.Header
+		// ClientID is the clientId this request carries on the wire, as a
+		// decimal string; it is copied onto the result (see
+		// SendMessageResult.CliMsgID).
+		ClientID string
 	}
 	attachmentSendPayload struct {
 		Path   string
 		Params map[string]any
+		// ClientID mirrors Params["clientId"] as a decimal string.
+		ClientID string
 	}
 
+	// SendMessageResult is the decoded `data` of a text send (sms, sendmsg,
+	// mention, quote) and of an attachment send (photo_original/send,
+	// asyncfile/msg).
+	//
+	// MsgID is the server's message id as a decimal string. Zalo answers it
+	// as a JSON number on some endpoints and as a quoted string on others
+	// (zca-js types it as a number); both decode to the same string. An
+	// absent, null or unusable id decodes to "" and is never an error: the
+	// request already succeeded (error_code 0), so failing the decode would
+	// report a DELIVERED message as failed. See UnmarshalJSON.
+	//
+	// CliMsgID is NOT part of the response. It is the clientId this library
+	// generated for the request and put on the wire, as a decimal string,
+	// filled in by SendMessage so a caller can correlate the message with
+	// the cliMsgId Zalo reports for it later. It is empty for a GIF result
+	// (SendGIF does not expose its clientId).
 	SendMessageResult struct {
-		MsgID string `json:"msgId"`
+		MsgID    string `json:"msgId"`
+		CliMsgID string `json:"-"`
 	}
 	SendMessageResponse struct {
 		Message    *SendMessageResult  `json:"message"`
@@ -149,6 +172,7 @@ func prepareAttachmentPayloads(
 
 	for index, upload := range uploads {
 		var path string
+		var cliID string
 		var payload map[string]any
 
 		switch upload.FileType {
@@ -157,9 +181,10 @@ func prepareAttachmentPayloads(
 				return nil, ErrInvalidAttachmentUpload
 			}
 			image := upload.Image
+			cliID = strconv.FormatInt(clientID, 10)
 			payload = map[string]any{
 				"photoId":  image.PhotoID,
-				"clientId": strconv.FormatInt(clientID, 10),
+				"clientId": cliID,
 				"desc":     message.Msg,
 				"width":    image.Width,
 				"height":   image.Height,
@@ -196,6 +221,7 @@ func prepareAttachmentPayloads(
 				return nil, ErrInvalidAttachmentUpload
 			}
 			file := upload.File
+			cliID = strconv.Itoa(upload.ClientFileID)
 			payload = map[string]any{
 				"fileId":      file.FileID,
 				"checksum":    file.Checksum,
@@ -225,10 +251,28 @@ func prepareAttachmentPayloads(
 		if message.Urgency == model.UrgImportant || message.Urgency == model.UrgUrgent {
 			payload["metaData"] = map[string]any{"urgency": message.Urgency}
 		}
-		result = append(result, attachmentSendPayload{Path: path, Params: payload})
+		result = append(result, attachmentSendPayload{Path: path, Params: payload, ClientID: cliID})
 	}
 
 	return result, nil
+}
+
+// UnmarshalJSON decodes a send response, accepting msgId as a JSON number or
+// a quoted string (model.FlexIDString). It never fails: by the time this
+// runs the envelope has already said error_code 0, so the message was
+// accepted, and a payload this library cannot read (a bare value, an array,
+// a msgId of some other type) must degrade to an unknown id rather than
+// turn a delivered message into a "Failed to parse response data" error.
+func (r *SendMessageResult) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		MsgID json.RawMessage `json:"msgId"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		r.MsgID = ""
+		return nil
+	}
+	r.MsgID = model.FlexIDString(raw.MsgID)
+	return nil
 }
 
 var sendMessageFactory = apiFactory[*SendMessageResponse, SendMessageFn]()(
@@ -323,9 +367,10 @@ var sendMessageFactory = apiFactory[*SendMessageResponse, SendMessageFn]()(
 				}
 			}
 
+			clientID := time.Now().UnixMilli()
 			payload := map[string]any{
 				"message":  message.Msg,
-				"clientId": time.Now().UnixMilli(),
+				"clientId": clientID,
 				"ttl":      message.TTL,
 			}
 
@@ -370,8 +415,9 @@ var sendMessageFactory = apiFactory[*SendMessageResponse, SendMessageFn]()(
 			body := httpx.BuildFormBody(map[string]string{"params": enc})
 
 			return &sendData{
-				URL:  url.String(),
-				Body: body,
+				URL:      url.String(),
+				Body:     body,
+				ClientID: strconv.FormatInt(clientID, 10),
 			}, nil
 		}
 
@@ -430,7 +476,8 @@ var sendMessageFactory = apiFactory[*SendMessageResponse, SendMessageFn]()(
 						map[string]any{"nretry": "0"},
 						true,
 					),
-					Body: httpx.BuildFormBody(map[string]string{"params": enc}),
+					Body:     httpx.BuildFormBody(map[string]string{"params": enc}),
+					ClientID: payload.ClientID,
 				})
 			}
 			return result, gifs, nil
@@ -459,6 +506,7 @@ var sendMessageFactory = apiFactory[*SendMessageResponse, SendMessageFn]()(
 						return err
 					}
 
+					res.CliMsgID = data.ClientID
 					results[index] = res
 
 					return nil
