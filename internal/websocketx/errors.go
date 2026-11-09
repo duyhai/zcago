@@ -57,13 +57,12 @@ func isConnClosedOrReset(err error) bool {
 	if errors.Is(err, net.ErrClosed) {
 		return true
 	}
-	var op *net.OpError
-	if errors.As(err, &op) {
-		if se, ok := op.Err.(syscall.Errno); ok {
-			if se == syscall.EPIPE || se == syscall.ECONNRESET {
-				return true
-			}
-		}
+	// errors.Is, not a type assertion on net.OpError.Err: a read reset arrives
+	// as *os.SyscallError{Err: ECONNRESET} inside the OpError, which an
+	// assertion to syscall.Errno misses -- leaving readLoop to spin on the
+	// dead socket.
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
+		return true
 	}
 
 	return strings.Contains(err.Error(), "use of closed network connection")
